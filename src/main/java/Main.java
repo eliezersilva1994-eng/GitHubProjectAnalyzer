@@ -3,15 +3,21 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import org.json.JSONObject;
+import java.util.Scanner;
 
 public class Main {
 
     public static void main(String[] args) throws Exception {
 
         String token = System.getenv("GITHUB_TOKEN");
-        String repositorio = "torvalds/linux"; // exemplo pra testar
 
-        HttpClient client = HttpClient.newHttpClient();
+        Scanner scanner = new Scanner(System.in);
+        System.out.print("Digite o repositório (formato usuario/repositorio): ");
+        String repositorio = scanner.nextLine();
+
+        HttpClient client = HttpClient.newBuilder()
+                .followRedirects(HttpClient.Redirect.NORMAL)
+                .build();
 
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create("https://api.github.com/repos/" + repositorio))
