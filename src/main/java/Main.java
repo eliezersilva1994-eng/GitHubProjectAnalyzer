@@ -5,6 +5,7 @@ import java.net.http.HttpResponse;
 import org.json.JSONObject;
 import org.json.JSONArray;
 import java.util.Scanner;
+import java.time.Duration;
 
 public class Main {
 
@@ -17,9 +18,11 @@ public class Main {
         System.out.print("Digite o repositório (formato usuario/repositorio): ");
         String repositorio = scanner.nextLine();
 
-        // HTTP client shared by all requests / Cliente HTTP compartilhado por todas as requisições
+        // HTTP client shared by all requests, with a connect timeout so it never hangs forever
+        // Cliente HTTP compartilhado por todas as requisições, com timeout de conexão pra nunca travar
         HttpClient client = HttpClient.newBuilder()
                 .followRedirects(HttpClient.Redirect.NORMAL)
+                .connectTimeout(Duration.ofSeconds(10))
                 .build();
 
         // Fetches general repository data / Busca dados gerais do repositório
@@ -27,6 +30,7 @@ public class Main {
                 .uri(URI.create("https://api.github.com/repos/" + repositorio))
                 .header("Authorization", "Bearer " + token)
                 .header("Accept", "application/vnd.github+json")
+                .timeout(Duration.ofSeconds(15))
                 .build();
 
         HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
@@ -42,6 +46,7 @@ public class Main {
                 .uri(URI.create("https://api.github.com/repos/" + repositorio + "/contributors"))
                 .header("Authorization", "Bearer " + token)
                 .header("Accept", "application/vnd.github+json")
+                .timeout(Duration.ofSeconds(15))
                 .build();
 
         HttpResponse<String> responseContribuidores = client.send(requestContribuidores, HttpResponse.BodyHandlers.ofString());
@@ -55,6 +60,7 @@ public class Main {
                 .uri(URI.create("https://api.github.com/repos/" + repositorio + "/languages"))
                 .header("Authorization", "Bearer " + token)
                 .header("Accept", "application/vnd.github+json")
+                .timeout(Duration.ofSeconds(15))
                 .build();
 
         HttpResponse<String> responseLinguagens = client.send(requestLinguagens, HttpResponse.BodyHandlers.ofString());
@@ -112,6 +118,7 @@ public class Main {
                 .uri(URI.create("https://api.github.com/repos/" + repositorio + "/stats/contributors"))
                 .header("Authorization", "Bearer " + token)
                 .header("Accept", "application/vnd.github+json")
+                .timeout(Duration.ofSeconds(15))
                 .build();
 
         HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
@@ -133,19 +140,61 @@ public class Main {
         return totalCommits;
     }
 
-    // Counts issues by state using the Search API, which correctly excludes pull requests
-    // Conta issues por estado usando a Search API, que exclui corretamente os pull requests
+    // Counts issues by state using the regular issues endpoint (not the Search API, which has
+    // been unreliable with newer GitHub query parsing). This endpoint returns both issues and
+    // pull requests mixed together, so we skip any item that has a "pull_request" key.
+    //
+    // Conta issues por estado usando o endpoint normal de issues (não a Search API, que anda
+    // instável com o novo parser de query do GitHub). Esse endpoint retorna issues e pull
+    // requests misturados, então pulamos qualquer item que tenha a chave "pull_request".
     private static int contarIssues(HttpClient client, String repositorio, String token, String estado) throws Exception {
-        String query = "repo:" + repositorio + "+is:issue+state:" + estado;
-        HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create("https://api.github.com/search/issues?q=" + query))
-                .header("Authorization", "Bearer " + token)
-                .header("Accept", "application/vnd.github+json")
-                .build();
+        int total = 0;
+        int pagina = 1;
+        int LIMITE_PAGINAS = 300; // safety cap: 300 x 100 = up to 30,000 items / limite de segurança
 
-        HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
-        JSONObject json = new JSONObject(response.body());
-        return json.getInt("total_count");
+        while (pagina <= LIMITE_PAGINAS) {
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create("https://api.github.com/repos/" + repositorio
+                            + "/issues?state=" + estado + "&per_page=100&page=" + pagina))
+                    .header("Authorization", "Bearer " + token)
+                    .header("Accept", "application/vnd.github+json")
+                    .timeout(Duration.ofSeconds(15))
+                    .build();
+
+            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+
+            if (response.statusCode() != 200) {
+                // The GitHub REST API caps this kind of pagination at 10,000 items (page 100 x
+                // per_page 100). For very large repositories the real count may be higher, so
+                // we warn instead of silently returning a number that looks precise but isn't.
+                //
+                // A REST API do GitHub limita esse tipo de paginação a 10.000 itens (página
+                // 100 x per_page 100). Para repositórios muito grandes o total real pode ser
+                // maior, então avisamos em vez de devolver um número que parece exato mas não é.
+                System.out.println("Aviso: a contagem de issues " + estado
+                        + " parou em " + total + " (limite de paginação da API do GitHub atingido)."
+                        + " Para repositórios muito grandes esse número pode estar abaixo do real.");
+                break;
+            }
+
+            JSONArray itens = new JSONArray(response.body());
+
+            if (itens.isEmpty()) {
+                break;
+            }
+
+            for (int i = 0; i < itens.length(); i++) {
+                if (!itens.getJSONObject(i).has("pull_request")) {
+                    total++;
+                }
+            }
+
+            System.out.println("  (" + estado + ") página " + pagina + " lida, total parcial: " + total);
+
+            pagina++;
+        }
+
+        return total;
     }
 
     // Fetches weekly commit activity; retries while GitHub is still computing the stats (HTTP 202)
@@ -155,6 +204,7 @@ public class Main {
                 .uri(URI.create("https://api.github.com/repos/" + repositorio + "/stats/commit_activity"))
                 .header("Authorization", "Bearer " + token)
                 .header("Accept", "application/vnd.github+json")
+                .timeout(Duration.ofSeconds(15))
                 .build();
 
         HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
