@@ -38,7 +38,7 @@ public class Main {
 
         System.out.println("Nome: " + json.getString("full_name"));
         System.out.println("Estrelas: " + json.getInt("stargazers_count"));
-        System.out.println("Linguagem principal: " + json.getString("language"));
+        System.out.println("Linguagem principal: " + json.optString("language", "não definida"));
         System.out.println("Issues abertas: " + json.getInt("open_issues_count"));
 
         // Fetches contributors / Busca contribuidores
@@ -90,6 +90,17 @@ public class Main {
         // Fetches weekly commit activity (last 52 weeks) / Busca a atividade semanal de commits (últimas 52 semanas)
         JSONArray atividadeSemanal = buscarAtividadeSemanal(client, repositorio, token);
 
+        // Saves this run as a snapshot in the local database, then reads back the full
+        // history for this repository, so the dashboard can show a real evolution over time.
+        //
+        // Salva essa execução como um retrato (snapshot) no banco local, depois lê de volta
+        // o histórico completo desse repositório, pra o dashboard mostrar uma evolução real.
+        JSONArray historico;
+        try (java.sql.Connection conexao = Database.conectar()) {
+            Database.salvarAnalise(conexao, repositorio, totalCommits, contribuidores.length(), issuesAbertas, issuesFechadas);
+            historico = Database.buscarHistorico(conexao, repositorio);
+        }
+
         // Builds the final JSON output that will feed the dashboard
         // Monta o JSON final que vai alimentar o dashboard
         JSONObject saida = new JSONObject();
@@ -100,6 +111,7 @@ public class Main {
         saida.put("issuesFechadas", issuesFechadas);
         saida.put("linguagens", linguagens);
         saida.put("atividadeSemanal", atividadeSemanal);
+        saida.put("historico", historico);
 
         // Writes the JSON file to disk / Escreve o arquivo JSON no disco
         java.nio.file.Files.writeString(java.nio.file.Path.of("dados.json"), saida.toString(2));
