@@ -54,6 +54,26 @@ public class Main {
 
         System.out.println("Contribuidores: " + contribuidores.length());
 
+        // Builds a simplified list with just login and commit count per contributor.
+        // The API already returns this sorted by contributions, descending.
+        //
+        // Monta uma lista simplificada com login e total de commits de cada colaborador.
+        // A API já devolve isso ordenado por contribuições, do maior pro menor.
+        JSONArray listaColaboradores = new JSONArray();
+        for (int i = 0; i < contribuidores.length(); i++) {
+            JSONObject c = contribuidores.getJSONObject(i);
+            JSONObject colaborador = new JSONObject();
+            colaborador.put("login", c.optString("login", "desconhecido"));
+            colaborador.put("contribuicoes", c.optInt("contributions", 0));
+            listaColaboradores.put(colaborador);
+        }
+
+        System.out.println("Top colaboradores:");
+        for (int i = 0; i < Math.min(5, listaColaboradores.length()); i++) {
+            JSONObject c = listaColaboradores.getJSONObject(i);
+            System.out.println("  " + c.getString("login") + ": " + c.getInt("contribuicoes") + " commits");
+        }
+
         // Fetches languages (bytes per language) and calculates percentages
         // Busca linguagens (bytes por linguagem) e calcula os percentuais
         HttpRequest requestLinguagens = HttpRequest.newBuilder()
@@ -112,6 +132,7 @@ public class Main {
         saida.put("linguagens", linguagens);
         saida.put("atividadeSemanal", atividadeSemanal);
         saida.put("historico", historico);
+        saida.put("listaColaboradores", listaColaboradores);
 
         // Writes the JSON file to disk / Escreve o arquivo JSON no disco
         java.nio.file.Files.writeString(java.nio.file.Path.of("dados.json"), saida.toString(2));
@@ -144,7 +165,20 @@ public class Main {
             tentativas++;
         }
 
-        JSONArray contribuidoresStats = new JSONArray(response.body());
+        // If GitHub still hasn't finished computing the stats (or the repo is too new/small
+        // to have any), the body won't be a JSON array. We warn and return 0 instead of crashing.
+        //
+        // Se o GitHub ainda não terminou de calcular as estatísticas (ou o repositório é novo
+        // demais/pequeno demais pra ter alguma), o corpo não vem como um array JSON. Avisamos
+        // e devolvemos 0 em vez de quebrar o programa.
+        String corpo = response.body() == null ? "" : response.body().trim();
+        if (!corpo.startsWith("[")) {
+            System.out.println("Aviso: o GitHub ainda não calculou as estatísticas de commits desse "
+                    + "repositório (comum em repositórios novos ou pequenos). Tente novamente em alguns minutos.");
+            return 0;
+        }
+
+        JSONArray contribuidoresStats = new JSONArray(corpo);
         int totalCommits = 0;
         for (int i = 0; i < contribuidoresStats.length(); i++) {
             totalCommits += contribuidoresStats.getJSONObject(i).getInt("total");
@@ -228,7 +262,19 @@ public class Main {
             tentativas++;
         }
 
+        // Same defensive check as contarCommits: if GitHub hasn't finished computing this
+        // yet, return an empty list instead of crashing.
+        //
+        // Mesma proteção do contarCommits: se o GitHub ainda não terminou de calcular isso,
+        // devolve uma lista vazia em vez de quebrar o programa.
+        String corpo = response.body() == null ? "" : response.body().trim();
+        if (!corpo.startsWith("[")) {
+            System.out.println("Aviso: o GitHub ainda não calculou a atividade semanal desse "
+                    + "repositório. Tente novamente em alguns minutos.");
+            return new JSONArray();
+        }
+
         // Each item: {total, week, days: [...]} / Cada item: {total, week, days: [...]}
-        return new JSONArray(response.body());
+        return new JSONArray(corpo);
     }
 }
